@@ -1,0 +1,11 @@
+[package]
+name        = "lex-pack-flex"
+version     = "0.1.0"
+description = "Flex domain pack — balancing-market flex tender/commit/settle lifecycle (buyer posts a shed request, a supply-side seller commits, delivery is verified and settled), each transition hash-chained."
+
+[dependencies]
+lex-soft   = { git = "https://github.com/alpibrusl/lex-soft" }
+lex-trail  = { git = "https://github.com/alpibrusl/lex-trail" }
+lex-web    = { git = "https://github.com/alpibrusl/lex-web" }
+lex-schema = { git = "https://github.com/alpibrusl/lex-schema" }
+lex-log    = { git = "https://github.com/alpibrusl/lex-log" }

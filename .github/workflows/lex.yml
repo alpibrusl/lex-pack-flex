@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Pinned at scaffold time. Bump when you upgrade the toolchain.
+  LEX_VERSION: v0.10.8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lex toolchain (pre-built binary)
+        run: |
+          set -euo pipefail
+          TARGET=x86_64-unknown-linux-gnu
+          URL="https://github.com/alpibrusl/lex-lang/releases/download/${LEX_VERSION}/lex-${LEX_VERSION}-${TARGET}.tar.gz"
+          curl -sSfL "$URL" | tar -xz
+          sudo install -m 0755 "lex-${LEX_VERSION}-${TARGET}/lex" /usr/local/bin/lex
+          lex --version
+
+      - name: Install package dependencies
+        run: lex pkg install
+
+      - name: Type-check (strict)
+        run: lex check --strict src/main.lex
+
+      - name: Format check
+        run: lex fmt --check src/ tests/
+
+      - name: Test
+        run: lex test
+
+      # Belt-and-braces: re-run the same checks via the `lex ci`
+      # umbrella so this workflow stays in sync with whatever
+      # `lex ci` runs locally (contributors run `lex ci` before
+      # pushing). Remove if you find the duplication too noisy.
+      - name: lex ci (full repro)
+        run: lex ci
