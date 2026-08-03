@@ -28,7 +28,11 @@ jobs:
         run: lex pkg install
 
       - name: Type-check (strict)
-        run: lex check --strict src/main.lex
+        run: |
+          set -e
+          for f in src/*.lex; do
+            lex check --strict "$f"
+          done
 
       - name: Format check
         run: lex fmt --check src/ tests/
