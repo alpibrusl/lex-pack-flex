@@ -32,6 +32,8 @@ import "lex-agent/src/agent_card" as card
 
 import "lex-soft/src/runner" as runner
 
+import "lex-agent/src/message" as msg
+
 fn http_post_json(url :: Str, body :: Str, tenant :: Str) -> [net] jv.Json {
   let req0 := { method: "POST", url: url, headers: map.new(), body: Some(bytes.from_str(body)), timeout_ms: Some(30000) }
   let req1 := http.with_header(req0, "Content-Type", "application/json")
@@ -106,7 +108,10 @@ fn make_flex_def(db :: Db, id :: Str, base_url :: Str, self_base_url :: Str, pro
   let capability := flex_capability()
   let cfg := { id: id, kind: "flex-ops", system_prompt: flex_system_prompt(id), model_name: model_name, provider_name: provider_name, provider_url: provider_url, provider_key: provider_key, backends: [{ key: "self_url", url: self_base_url }], intent_roles: [], tools: make_flex_tools(self_base_url) }
   let handler := runner.make_handler(db, cfg)
+  let handle_bridged := fn (m :: msg.Message) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] srv.HandlerOutcome {
+    handler(m)
+  }
   let c := card.make(id, str.concat("Flex ops agent ", id), "0.1.0", base_url, [capability])
-  srv.make_agent_def(c, [{ capability: capability, handle: handler }])
+  srv.make_agent_def(c, [{ capability: capability, handle: handle_bridged }])
 }
 
