@@ -205,7 +205,7 @@ fn tender_json(ref :: Str, t :: Tender, events :: List[jv.Json]) -> jv.Json {
 
 fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
   let __t := ensure_tables(db)
-  let with_tender := router.route_effectful(r, "POST", "/flex/tenders", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc] resp.Response {
+  let with_tender := router.route_effectful(r, "POST", "/flex/tenders", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] resp.Response {
     match jv.parse(c.body) {
       Err(_) => resp.bad_request("{\"error\":\"invalid json\"}"),
       Ok(j) => {
@@ -238,7 +238,7 @@ fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
       },
     }
   })
-  let with_commit := router.route_effectful(with_tender, "POST", "/flex/tenders/:ref/commit", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc] resp.Response {
+  let with_commit := router.route_effectful(with_tender, "POST", "/flex/tenders/:ref/commit", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] resp.Response {
     let tref := match ctx.path_param(c, "ref") {
       Some(s) => s,
       None => "",
@@ -273,7 +273,7 @@ fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
       },
     }
   })
-  let with_get := router.route_effectful(with_commit, "GET", "/flex/tenders/:ref", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc] resp.Response {
+  let with_get := router.route_effectful(with_commit, "GET", "/flex/tenders/:ref", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] resp.Response {
     let tref := match ctx.path_param(c, "ref") {
       Some(s) => s,
       None => "",
@@ -283,7 +283,7 @@ fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
       Some(t) => resp.json(jv.stringify(tender_json(tref, t, tender_events(db, tref)))),
     }
   })
-  router.route_effectful(with_get, "POST", "/flex/settlements", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc] resp.Response {
+  router.route_effectful(with_get, "POST", "/flex/settlements", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] resp.Response {
     match jv.parse(c.body) {
       Err(_) => resp.bad_request("{\"error\":\"invalid json\"}"),
       Ok(j) => {

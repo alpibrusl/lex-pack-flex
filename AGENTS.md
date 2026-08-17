@@ -8,11 +8,11 @@ idiom contract before writing any code.
 ## 1. Install the Lex toolchain
 
 If `lex --version` doesn't work, download the pre-built binary for your
-platform. This project was scaffolded against **v0.10.8** — the CI
+platform. This project was scaffolded against **v0.10.10** — the CI
 workflow is pinned to that version, so use it locally too.
 
 ```sh
-LEX_VERSION=v0.10.8
+LEX_VERSION=v0.10.10
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)   TARGET=x86_64-unknown-linux-gnu  ;;
   Linux-aarch64)  TARGET=aarch64-unknown-linux-gnu ;;
@@ -25,8 +25,8 @@ sudo install -m 0755 "lex-${LEX_VERSION}-${TARGET}/lex" /usr/local/bin/lex
 lex --version
 ```
 
-Windows: download `lex-v0.10.8-x86_64-pc-windows-msvc.zip` from
-<https://github.com/alpibrusl/lex-lang/releases/tag/v0.10.8> and put
+Windows: download `lex-v0.10.10-x86_64-pc-windows-msvc.zip` from
+<https://github.com/alpibrusl/lex-lang/releases/tag/v0.10.10> and put
 `lex.exe` on `PATH`.
 
 **Fallback (build from source).** Only needed if you want a version
