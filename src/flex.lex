@@ -61,6 +61,10 @@ import "lex-money/src/rounding" as mround
 
 import "lex-soft/src/positions" as pos
 
+import "lex-baseline/src/method" as bmethod
+
+import "./measure" as measure
+
 fn jstr(j :: jv.Json, k :: Str) -> Str {
   match jv.get_field(j, k) {
     Some(JStr(v)) => v,
@@ -203,7 +207,18 @@ fn tender_json(ref :: Str, t :: Tender, events :: List[jv.Json]) -> jv.Json {
   JObj([("tender_ref", JStr(ref)), ("buyer", JStr(t.buyer)), ("kw", JFloat(t.kw)), ("price_eur_dec", JStr(t.price_eur_dec)), ("window_start_ms", JInt(t.window_start_ms)), ("window_end_ms", JInt(t.window_end_ms)), ("status", JStr(t.status)), ("seller", JStr(t.seller)), ("site_id", JStr(t.site_id)), ("events", JList(events))])
 }
 
+# Mount without a baseline method: settlements use the seller's declared kWh,
+# exactly as before, and record that they were unmeasured rather than leaving a
+# reader to assume otherwise.
 fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
+  mount_measured(r, db, ems_url, None)
+}
+
+# Mount with a named baseline method. Settlements then compute the delivered
+# volume from the site's meter over the tender's own window and record the
+# method's fingerprint beside it, instead of taking the figure from the party
+# being paid (src/measure.lex).
+fn mount_measured(r :: router.Router, db :: Db, ems_url :: Str, method_spec :: Option[bmethod.Spec]) -> [sql] router.Router {
   let __t := ensure_tables(db)
   let with_tender := router.route_effectful(r, "POST", "/flex/tenders", fn (c :: ctx.Ctx) -> [io, time, crypto, random, sql, fs_read, fs_write, net, concurrent, llm, proc, approval] resp.Response {
     match jv.parse(c.body) {
@@ -320,11 +335,19 @@ fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
                 match evidence {
                   None => resp.json_status(409, "{\"error\":\"no delivery evidence: the EMS event log has no limit_updated entries for this site\"}"),
                   Some(ev_detail) => {
+                    let tender_window := match tender_for(db, tender_ref) {
+                      Some(tt) => (tt.window_start_ms, tt.window_end_ms),
+                      None => (0, 0),
+                    }
+                    let measurement := match tender_window {
+                      (ws, we) => measure.measure(method_spec, ems_url, site_id, ws, we, float.to_int(jnum(j, "nominated_kw") * 1000.0)),
+                    }
+                    let settled_kwh := measure.settled_kwh(measurement, jnum(j, "kwh"))
                     let log := settlement.trail_on(db)
                     match settlement.record_chargeback_dec(log, from_agent, to_agent, eur_dec, "EUR", ref) {
                       Err(e) => resp.json_status(500, str.concat("{\"error\":", str.concat(jv.stringify(JStr(e)), "}"))),
                       Ok(cb_id) => {
-                        let payload := jv.stringify(JObj([("agent", JStr(to_agent)), ("from_agent", JStr(from_agent)), ("to_agent", JStr(to_agent)), ("kwh", JFloat(jnum(j, "kwh"))), ("eur", JFloat(eur)), ("eur_dec", JStr(eur_dec)), ("window", JStr(jstr(j, "window"))), ("ref", JStr(ref)), ("tender_ref", JStr(tender_ref)), ("site_id", JStr(site_id)), ("evidence", JStr(ev_detail)), ("chargeback", JStr(cb_id))]))
+                        let payload := jv.stringify(JObj([("agent", JStr(to_agent)), ("from_agent", JStr(from_agent)), ("to_agent", JStr(to_agent)), ("kwh", JFloat(settled_kwh)), ("declared_kwh", JFloat(jnum(j, "kwh"))), ("overclaim_pct", JInt(measure.overclaim_pct(measurement, jnum(j, "kwh")))), ("measurement", measure.to_json(measurement)), ("eur", JFloat(eur)), ("eur_dec", JStr(eur_dec)), ("window", JStr(jstr(j, "window"))), ("ref", JStr(ref)), ("tender_ref", JStr(tender_ref)), ("site_id", JStr(site_id)), ("evidence", JStr(ev_detail)), ("chargeback", JStr(cb_id))]))
                         let ev := tlog.append(log, "flex.delivered", None, payload)
                         match ev {
                           Err(e) => resp.json_status(500, str.concat("{\"error\":", str.concat(jv.stringify(JStr(e)), "}"))),
@@ -337,7 +360,7 @@ fn mount(r :: router.Router, db :: Db, ems_url :: Str) -> [sql] router.Router {
                                 Ok(n) => n,
                               }
                             }
-                            resp.json_status(201, jv.stringify(JObj([("ok", JBool(true)), ("chargeback", JStr(cb_id)), ("event_id", JStr(x.id)), ("ref", JStr(ref)), ("tender_ref", JStr(tender_ref)), ("eur_dec", JStr(eur_dec)), ("evidence", JStr(ev_detail))])))
+                            resp.json_status(201, jv.stringify(JObj([("ok", JBool(true)), ("chargeback", JStr(cb_id)), ("event_id", JStr(x.id)), ("ref", JStr(ref)), ("tender_ref", JStr(tender_ref)), ("eur_dec", JStr(eur_dec)), ("evidence", JStr(ev_detail)), ("kwh", JFloat(settled_kwh)), ("measurement", measure.to_json(measurement))])))
                           },
                         }
                       },
