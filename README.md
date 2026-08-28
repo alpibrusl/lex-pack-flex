@@ -30,4 +30,8 @@ Part of the lex-soft pack family: `lex-soft` (engine, primitives) → this pack 
 
 ## License
 
-Matches the rest of the lex ecosystem.
+
+Copyright (c) 2026 lex-pack-flex contributors.
+
+Licensed under the [EUPL-1.2](LICENSE) — the European Union Public Licence, as used across the `lex-*` ecosystem.
+
