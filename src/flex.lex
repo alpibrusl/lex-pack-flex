@@ -123,6 +123,47 @@ fn metered_suffix(ems_url :: Str, site_id :: Str) -> [net] Str {
   }
 }
 
+# The trail event a tender is currently hanging from, if it has one.
+#
+# A settlement used to be appended with `None` as its parent, which made it an
+# orphan: the money was on the trail and the tender it settled was on the
+# trail, and nothing connected them. Walking from a payment back to the
+# evidence it was computed from — the thing this pack exists to make possible —
+# did not work on its own data.
+#
+# Empty means no link rather than a link to nothing: a tender that predates
+# trail_ref, or one whose append failed, must produce a root event rather than
+# a parent pointer to the empty id.
+fn parent_ref(db :: Db, tender_ref :: Str) -> [sql] Option[Str] {
+  if str.is_empty(tender_ref) {
+    None
+  } else {
+    match sql.query(db, "SELECT trail_ref FROM flex_tenders WHERE tender_ref = ?", [PStr(tender_ref)]) {
+      Err(_) => None,
+      Ok(rows) => match list.head(rows) {
+        None => None,
+        Some(row) => {
+          let r := row_str(row, "trail_ref")
+          if str.is_empty(r) {
+            None
+          } else {
+            Some(r)
+          }
+        },
+      },
+    }
+  }
+}
+
+# The UPDATEs above are bookkeeping: a failure to record the link must not fail
+# the request that already succeeded, so the result is deliberately dropped.
+fn sql_discard(r :: Result[Int, SqlError]) -> Int {
+  match r {
+    Err(_) => 0,
+    Ok(_) => 1,
+  }
+}
+
 fn delivery_evidence(ems_url :: Str, site_id :: Str) -> [net] Option[Str] {
   let url := str.concat(ems_url, str.concat("/api/v1/sites/", str.concat(site_id, "/events")))
   match http.get(url) {
@@ -174,9 +215,13 @@ fn row_int(row :: sql.Row, k :: Str) -> Int {
 # tokio-postgres refuses to serialize against a REAL (float4) column — see
 # reference_lex_postgres memory. The ALTER below widens an already-deployed
 # table in place (no-op on SQLite; no-op on Postgres once already widened).
+# The trail_ref column arrived after the first deployments, so the ADD COLUMN
+# here runs against schemas that already have it; that error is expected and
+# discarded, exactly as the kw widening above is.
 fn ensure_tables(db :: Db) -> [sql] Unit {
-  let __t := sql.exec(db, "CREATE TABLE IF NOT EXISTS flex_tenders (tender_ref TEXT PRIMARY KEY, buyer TEXT NOT NULL, kw DOUBLE PRECISION NOT NULL DEFAULT 0, price_eur_dec TEXT NOT NULL DEFAULT '', window_start_ms BIGINT NOT NULL DEFAULT 0, window_end_ms BIGINT NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'open', seller TEXT NOT NULL DEFAULT '', site_id TEXT NOT NULL DEFAULT '', committed_ms BIGINT NOT NULL DEFAULT 0, settled_ref TEXT NOT NULL DEFAULT '', created_ms BIGINT NOT NULL)", [])
+  let __t := sql.exec(db, "CREATE TABLE IF NOT EXISTS flex_tenders (tender_ref TEXT PRIMARY KEY, buyer TEXT NOT NULL, kw DOUBLE PRECISION NOT NULL DEFAULT 0, price_eur_dec TEXT NOT NULL DEFAULT '', window_start_ms BIGINT NOT NULL DEFAULT 0, window_end_ms BIGINT NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'open', seller TEXT NOT NULL DEFAULT '', site_id TEXT NOT NULL DEFAULT '', committed_ms BIGINT NOT NULL DEFAULT 0, settled_ref TEXT NOT NULL DEFAULT '', trail_ref TEXT NOT NULL DEFAULT '', created_ms BIGINT NOT NULL)", [])
   let __kw := sql.exec(db, "ALTER TABLE flex_tenders ALTER COLUMN kw TYPE DOUBLE PRECISION", [])
+  let __tr := sql.exec(db, "ALTER TABLE flex_tenders ADD COLUMN trail_ref TEXT NOT NULL DEFAULT ''", [])
   ()
 }
 
@@ -243,7 +288,10 @@ fn mount_measured(r :: router.Router, db :: Db, ems_url :: Str, method_spec :: O
                 Ok(_) => {
                   let log := settlement.trail_on(db)
                   let payload := jv.stringify(JObj([("tender_ref", JStr(tref)), ("buyer", JStr(buyer)), ("kw", JFloat(kw)), ("price_eur_dec", JStr(price_dec)), ("window_start_ms", JInt(ws)), ("window_end_ms", JInt(we))]))
-                  let __e := tlog.append(log, "flex.tender", None, payload)
+                  let __e := match tlog.append(log, "flex.tender", None, payload) {
+                    Err(_) => 0,
+                    Ok(ev) => sql_discard(sql.exec(db, "UPDATE flex_tenders SET trail_ref = ? WHERE tender_ref = ?", [PStr(ev.id), PStr(tref)])),
+                  }
                   resp.json_status(201, jv.stringify(JObj([("ok", JBool(true)), ("tender_ref", JStr(tref)), ("buyer", JStr(buyer)), ("kw", JFloat(kw)), ("price_eur_dec", JStr(price_dec)), ("status", JStr("open"))])))
                 },
               }
@@ -278,7 +326,10 @@ fn mount_measured(r :: router.Router, db :: Db, ems_url :: Str, method_spec :: O
                 } else {
                   let log := settlement.trail_on(db)
                   let payload := jv.stringify(JObj([("tender_ref", JStr(tref)), ("buyer", JStr(t.buyer)), ("seller", JStr(seller)), ("site_id", JStr(site_id)), ("kw", JFloat(t.kw)), ("price_eur_dec", JStr(t.price_eur_dec))]))
-                  let __e := tlog.append(log, "flex.committed", None, payload)
+                  let __e := match tlog.append(log, "flex.committed", parent_ref(db, tref), payload) {
+                    Err(_) => 0,
+                    Ok(ev) => sql_discard(sql.exec(db, "UPDATE flex_tenders SET trail_ref = ? WHERE tender_ref = ?", [PStr(ev.id), PStr(tref)])),
+                  }
                   resp.json_status(201, jv.stringify(JObj([("ok", JBool(true)), ("tender_ref", JStr(tref)), ("seller", JStr(seller)), ("site_id", JStr(site_id)), ("status", JStr("committed"))])))
                 },
               }
@@ -348,7 +399,7 @@ fn mount_measured(r :: router.Router, db :: Db, ems_url :: Str, method_spec :: O
                       Err(e) => resp.json_status(500, str.concat("{\"error\":", str.concat(jv.stringify(JStr(e)), "}"))),
                       Ok(cb_id) => {
                         let payload := jv.stringify(JObj([("agent", JStr(to_agent)), ("from_agent", JStr(from_agent)), ("to_agent", JStr(to_agent)), ("kwh", JFloat(settled_kwh)), ("declared_kwh", JFloat(jnum(j, "kwh"))), ("overclaim_pct", JInt(measure.overclaim_pct(measurement, jnum(j, "kwh")))), ("measurement", measure.to_json(measurement)), ("eur", JFloat(eur)), ("eur_dec", JStr(eur_dec)), ("window", JStr(jstr(j, "window"))), ("ref", JStr(ref)), ("tender_ref", JStr(tender_ref)), ("site_id", JStr(site_id)), ("evidence", JStr(ev_detail)), ("chargeback", JStr(cb_id))]))
-                        let ev := tlog.append(log, "flex.delivered", None, payload)
+                        let ev := tlog.append(log, "flex.delivered", parent_ref(db, tender_ref), payload)
                         match ev {
                           Err(e) => resp.json_status(500, str.concat("{\"error\":", str.concat(jv.stringify(JStr(e)), "}"))),
                           Ok(x) => {
