@@ -12,7 +12,7 @@ platform. This project was scaffolded against **v0.10.11** — the CI
 workflow is pinned to that version, so use it locally too.
 
 ```sh
-LEX_VERSION=v0.10.11
+LEX_VERSION=v0.10.18
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)   TARGET=x86_64-unknown-linux-gnu  ;;
   Linux-aarch64)  TARGET=aarch64-unknown-linux-gnu ;;
