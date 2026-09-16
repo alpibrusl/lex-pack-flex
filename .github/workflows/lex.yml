@@ -7,7 +7,7 @@ on:
 
 env:
   # Pinned at scaffold time. Bump when you upgrade the toolchain.
-  LEX_VERSION: v0.10.18
+  LEX_VERSION: v0.11.32
 
 jobs:
   build:
